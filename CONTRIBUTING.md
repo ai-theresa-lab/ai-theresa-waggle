@@ -2,7 +2,18 @@
 
 Thanks for helping improve Waggle.
 
+## Before you start
+
+For a bug fix or a small change, just open a pull request. For a new feature, a new expert lens or connector, or a
+larger refactor, open an issue first
+([bug report or feature request](https://github.com/ai-theresa-lab/ai-theresa-waggle/issues/new/choose)) so the
+approach can be agreed before you put in the work.
+
+Security problems never go in a public issue or pull request — see [Security issues](#security-issues).
+
 ## Development
+
+Requirements: Node.js 22.7+ and git (git 2.28+ to run the full test suite).
 
 ```bash
 npm ci
@@ -20,10 +31,31 @@ Before opening a pull request:
 npm run typecheck
 npm test
 npm run check:english
+node --test "telemetry-collector/**/*.test.mjs"
 ```
 
-CI runs the same three commands on Linux. On Windows a few tests are skipped (they need a POSIX shell or permission to
-create symlinks); everything else runs the same, and CI on Linux is the reference.
+CI runs the same commands on Linux. On Windows a few tests are skipped (they need a POSIX shell or permission to create
+symlinks); everything else runs the same, and CI on Linux is the reference.
+
+## Submitting a pull request
+
+1. Fork the repository and create a branch from `main`.
+2. Make your change. Keep one logical change per pull request, and add or update tests when behaviour changes.
+3. Run the checks above.
+4. Open a pull request against `main` and fill in the template.
+
+If your change touches the telemetry payload, also read [Telemetry changes](#telemetry-changes).
+
+Leave versioning to the maintainers: do not change the version in `package.json` / `package-lock.json` and do not add
+release notes. Maintainers bump the version and cut releases.
+
+## What happens next
+
+- A pull request from a fork may wait until a maintainer approves its CI run (always the case for a first-time
+  contributor).
+- CI then runs, on Linux: typecheck, unit tests, the English-only check and the telemetry collector tests
+  (see [`.github/workflows/test.yml`](.github/workflows/test.yml)).
+- A maintainer reviews the change, may ask for changes, and merges it if accepted.
 
 ## Where things live
 
@@ -53,4 +85,12 @@ create symlinks); everything else runs the same, and CI on Linux is the referenc
 ## Telemetry changes
 
 The telemetry payload is a public contract. Adding a field needs a change to `src/telemetry.ts`,
-`telemetry-collector/schema.mjs` (the schema test checks they agree), the README table and a note in the release notes.
+`telemetry-collector/schema.mjs` (the schema test checks they agree), a column in `telemetry-collector/bq-schema.json`
+(the collector tests check every field has one), the README table and the field table in
+`telemetry-collector/README.md`. Describe the change in the pull request so the maintainers can note it in the release
+notes.
+
+## Security issues
+
+Do not report a vulnerability in a public issue or pull request. Use GitHub's private vulnerability reporting as
+described in [SECURITY.md](SECURITY.md).
