@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CliError, currentStage, findingsSummary, openQuestions, parseArgs, runTargets, remediationMarkdown, reportData, repoFullName, sseLogLines, untrusted } from './cli-waggle.ts';
+import { CliError, currentStage, degradedStages, findingsSummary, openQuestions, parseArgs, runTargets, sinceLastScan, remediationMarkdown, reportData, repoFullName, sseLogLines, untrusted } from './cli-waggle.ts';
 
 test('parseArgs: command, positionals, repeated flags, = form and boolean flags', () => {
   const a = parseArgs(['scan', '--repo', 'a/b', '--repo=https://github.com/c/d', '--path', '.', '--full-rescan', 'extra']);
@@ -69,4 +69,19 @@ test('openQuestions lists the coverage gaps of every area, bounded', () => {
 test('runTargets merges repository selections and lists local folders', () => {
   assert.deepEqual(runTargets({ giturlFilter: ['a/b'], repoFilter: ['a/b', 'c/d'], localFilter: ['/w/x'] }), { repos: ['a/b', 'c/d'], folders: ['/w/x'] });
   assert.deepEqual(runTargets({}), { repos: [], folders: [] });
+});
+
+test('sinceLastScan summarises an incremental re-scan; a first scan has none', () => {
+  const data = { execution: { since: { baseline: { runId: 'rs_1', date: '2026-10-01' }, counts: { fixed: 1, new: 2, persisting: 3 },
+    fixed: [{ displayId: 'F-04', severity: 'high', title: 'Expired entries never deleted' }] } } };
+  assert.deepEqual(sinceLastScan(data), { previousRun: 'rs_1', previousDate: '2026-10-01',
+    counts: { fixed: 1, new: 2, persisting: 3, changed: 0, unchecked: 0 }, fixed: [{ id: 'F-04', severity: 'high', title: 'Expired entries never deleted' }] });
+  assert.equal(sinceLastScan({ execution: {} }), null);
+});
+
+test('degradedStages lists fallen-back stages; findings carry their change since the last scan', () => {
+  assert.deepEqual(degradedStages({ degraded: [{ stage: 'critique', reason: 'fetch failed' }] }), [{ stage: 'critique', reason: 'fetch failed' }]);
+  assert.deepEqual(degradedStages({}), []);
+  const s = findingsSummary([{ displayId: 'F-01', claim: 't', since: { status: 'persisting', since: '2026-10-01' } }] as never[]);
+  assert.equal((s.findings[0] as Record<string, unknown>).change, 'persisting');
 });
