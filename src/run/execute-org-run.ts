@@ -27,7 +27,7 @@ import { type MeasurePlane, prefixBundle, rejectedToGaps } from '../research/aud
 import { BudgetLedger, currentLedger, leadershipAuthorAdmit, recordDegraded, reverifyAdmit, withBudgetLane, withBudgetNode, withRunBudget } from '../research/budget.ts';
 import { ReadSetCollector, normalizeSnapshot, openedFromTrace, withReadSet } from '../research/readSet.ts';
 import { carryHow, deltaLaneSplit, laneCandidates, mergeCarried, pendingIsSettled, pendingUncheckedWhy, priorKnownBlock, runCarryForward, type CarriedLane, type CarryNote, type InputIndex, type PendingFinding } from './carryForward.ts';
-import { uncheckedBreakdown, uncheckedByWhy, type UncheckedWhy } from '../sinceLastScan.ts';
+import { uncheckedBreakdown, uncheckedByWhy, type UncheckedWhy, type ConfirmedFix } from '../sinceLastScan.ts';
 import { budgetLeftOpen, deltaEligibleLane, gitDiffPath, gitListFiles, incrSettings, laneIncompleteReason } from './incremental.ts';
 import { claimAuditCarryLine, deltaFocusPaths, mergeDeltaLane, staleRevivedHypotheses , unionReadSets } from './deltaLane.ts';
 import { reverifyFinding, reverifyLimits } from '../research/incrReverify.ts';
@@ -1080,7 +1080,7 @@ async function orgCritiqueExpert(run: Run, root: string, ctx: RunContext, ws?: {
   // WHY each prior finding is unchecked (looseKey → reason), for both reports.
   const uncheckedWhy: Record<string, UncheckedWhy> = {};
   // Prior findings a targeted re-check confirmed FIXED (looseKeys) — the diff counts nothing else as fixed.
-  const confirmedFixed: string[] = [];
+  const confirmedFixed: ConfirmedFix[] = [];
   const notePending = (ps: PendingFinding[]): void => { for (const p of ps) { const k = findingKeysLoose(p.finding); uncheckedLoose.push(k); uncheckedWhy[k] = pendingUncheckedWhy(p); } };
   // Persisted with the findings cut so the NEXT scan can carry them again (carryForward.ts CarriedLane / PendingFinding).
   const carriedByLane: Record<string, CarriedLane> = {}; const pendingPrior: PendingFinding[] = [];
@@ -1091,7 +1091,7 @@ async function orgCritiqueExpert(run: Run, root: string, ctx: RunContext, ws?: {
     Object.assign(carriedByLane, (fp.carried ?? {}) as Record<string, CarriedLane>); pendingPrior.push(...((fp.pending ?? []) as PendingFinding[]));
     Object.assign(carriedHow, (fp.carriedHow ?? {}) as Record<string, string>);
     // ...and the prior findings a targeted re-check confirmed fixed, so a resumed run still counts them as fixed.
-    confirmedFixed.push(...((fp.confirmedFixed ?? []) as string[]));
+    confirmedFixed.push(...((fp.confirmedFixed ?? []) as ConfirmedFix[]));
     for (const cl of Object.values(carriedByLane)) { carryHyp.push(...(cl.hypotheses ?? [])); carryMit.push(...(cl.mitigations ?? [])); }
     notePending(pendingPrior);
     ctx.log(run, reusedLine(rz!, 'findings', `${findings.length} finding(s) + ${gaps.length} coverage gap(s)`));

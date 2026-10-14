@@ -40,6 +40,9 @@ export interface KeyedFinding { f: Pick<Finding, 'id' | 'title' | 'severity' | '
  *   code-unchanged    — not raised again, but its code did not change (so it cannot have been fixed)
  *   not-confirmed     — not raised again and its code changed, but no re-check confirmed it fixed
  */
+/** A prior finding a targeted re-check confirmed fixed: its baseline id plus looseKey (twins can share a looseKey). */
+export interface ConfirmedFix { id: string; looseKey: string }
+export const confirmedFixId = (c: Pick<ConfirmedFix, 'id' | 'looseKey'>): string => JSON.stringify([String(c.id).toLowerCase(), c.looseKey]);
 export type UncheckedWhy = 'not-run' | 'incomplete' | 'recheck-budget' | 'recheck-unsettled' | 'code-unchanged' | 'not-confirmed';
 export const UNCHECKED_WHYS: UncheckedWhy[] = ['recheck-budget', 'recheck-unsettled', 'not-run', 'incomplete', 'code-unchanged', 'not-confirmed'];
 /** The reason clause (singular "it" / plural "them" by `n`). */
@@ -84,16 +87,20 @@ export function excludeFromDiff(f: Pick<Finding, 'source'>): boolean { return /^
 
 export function diffSinceLastScan(
   current: KeyedFinding[], baseline: KeyedFinding[], meta: SinceBaseline,
-  opts: { checkedBundles?: Set<string>; ranBundles?: Set<string>; uncheckedLoose?: Set<string>; uncheckedWhy?: Map<string, UncheckedWhy>; firstSeen?: (key: string) => string | undefined; fuzzyThreshold?: number; canBeFixed?: (b: KeyedFinding) => boolean; requireConfirmation?: boolean; confirmedFixed?: readonly string[]; citedCodeGone?: (b: KeyedFinding) => boolean } = {},
+  opts: { checkedBundles?: Set<string>; ranBundles?: Set<string>; uncheckedLoose?: Set<string>; uncheckedWhy?: Map<string, UncheckedWhy>; firstSeen?: (key: string) => string | undefined; fuzzyThreshold?: number; canBeFixed?: (b: KeyedFinding) => boolean; requireConfirmation?: boolean; confirmedFixed?: readonly ConfirmedFix[]; citedCodeGone?: (b: KeyedFinding) => boolean } = {},
 ): SinceLastScan {
   const live = (x: KeyedFinding): boolean => !excludeFromDiff(x.f) && x.ruledOut !== true;
   const base = baseline.filter(live);
+  // Rows a targeted re-check confirmed fixed. They may still match exactly (key / evidenceKey), but never through the
+  // loose or fuzzy tiers: a re-worded twin that persists must not claim the row that was fixed.
+  const confirmed = new Set((opts.confirmedFixed ?? []).filter((c) => c && typeof c === 'object').map(confirmedFixId));
+  const isConfirmed = (b: KeyedFinding): boolean => confirmed.has(confirmedFixId({ id: String(b.f.id ?? ''), looseKey: b.k.looseKey }));
   const claimed = new Set<number>();
   const statuses: (SinceStatus | undefined)[] = current.map(() => undefined);
   const matchedBase: (number | undefined)[] = current.map(() => undefined);   // which baseline row each current row matched
   const matchBy = (field: 'key' | 'evidenceKey' | 'looseKey', status: SinceStatus): void => {
     const idx = new Map<string, number[]>();
-    base.forEach((b, i) => { if (claimed.has(i)) return; const a = idx.get(b.k[field]) ?? []; a.push(i); idx.set(b.k[field], a); });
+    base.forEach((b, i) => { if (claimed.has(i) || (field === 'looseKey' && isConfirmed(b))) return; const a = idx.get(b.k[field]) ?? []; a.push(i); idx.set(b.k[field], a); });
     current.forEach((c, i) => {
       if (statuses[i] || !live(c)) return;
       const pool = idx.get(c.k[field]);
@@ -108,7 +115,7 @@ export function diffSinceLastScan(
   // 4. The fuzzy tier over what is still unmatched on both sides (live rows with features only).
   const thr = opts.fuzzyThreshold ?? fuzzyThreshold();
   const curFz = current.map((c, i) => (statuses[i] || !live(c) ? undefined : c.fz));
-  const baseFz = base.map((b, i) => (claimed.has(i) ? undefined : b.fz));
+  const baseFz = base.map((b, i) => (claimed.has(i) || isConfirmed(b) ? undefined : b.fz));
   for (const [i, j] of fuzzyPairs(curFz, baseFz, thr)) { claimed.add(j); matchedBase[i] = j; statuses[i] = fuzzyChanged(curFz[i]!, baseFz[j]!) ? 'changed' : 'persisting'; }
   current.forEach((c, i) => { if (!statuses[i] && live(c)) statuses[i] = 'new'; });
   const fixed: SinceLastScan['fixed'] = [];
@@ -117,12 +124,7 @@ export function diffSinceLastScan(
   const ruledOutNow = current.filter((c) => c.ruledOut === true && !excludeFromDiff(c.f));
   const ruledOutKeys = new Set(ruledOutNow.flatMap((c) => [c.k.key, c.k.evidenceKey, c.k.looseKey]));
   // A third: the file it cited no longer exists.
-  // A re-check confirmation names a looseKey, which two findings of one lane can share (same title, different files):
-  // each confirmation closes at most one unmatched row, so one fixed re-check never closes its still-open twin.
-  const confirmLeft = new Map<string, number>();
-  for (const k of opts.confirmedFixed ?? []) confirmLeft.set(k, (confirmLeft.get(k) ?? 0) + 1);
-  const takeConfirmation = (k: string): boolean => { const n = confirmLeft.get(k) ?? 0; if (!n) return false; confirmLeft.set(k, n - 1); return true; };
-  const confirmedGone = (b: KeyedFinding): boolean => ruledOutKeys.has(b.k.key) || ruledOutKeys.has(b.k.evidenceKey) || ruledOutKeys.has(b.k.looseKey) || Boolean(opts.citedCodeGone?.(b)) || takeConfirmation(b.k.looseKey);
+  const confirmedGone = (b: KeyedFinding): boolean => ruledOutKeys.has(b.k.key) || ruledOutKeys.has(b.k.evidenceKey) || ruledOutKeys.has(b.k.looseKey) || Boolean(opts.citedCodeGone?.(b)) || isConfirmed(b);
   base.forEach((b, i) => {
     if (claimed.has(i)) return;
     const row = { title: String(b.f.title ?? ''), severity: String(b.f.severity ?? ''), key: b.k.key, bundleId: b.k.bundleId };

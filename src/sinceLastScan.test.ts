@@ -98,7 +98,7 @@ test('with requireConfirmation, a prior finding that is merely not raised again 
   const current = [row('B2', 'b', true)];
   const loose = diffSinceLastScan(current, base, meta, { checkedBundles: new Set(['swe-arch']) });
   assert.equal(loose.counts.fixed, 3, 'without the flag, absence still reads as fixed (legacy callers)');
-  const strict = diffSinceLastScan(current, base, meta, { checkedBundles: new Set(['swe-arch']), requireConfirmation: true, confirmedFixed: ['l-a'] });
+  const strict = diffSinceLastScan(current, base, meta, { checkedBundles: new Set(['swe-arch']), requireConfirmation: true, confirmedFixed: [{ id: 'A', looseKey: 'l-a' }] });
   assert.deepEqual(strict.fixed.map((f) => f.key).sort(), ['a', 'b']);
   assert.deepEqual(strict.unchecked.map((u) => [u.key, u.why]), [['c', 'not-confirmed']]);
   assert.match(uncheckedWhyText('not-confirmed'), /no re-check confirmed it fixed/);
@@ -117,15 +117,19 @@ test('with requireConfirmation, a prior finding whose cited file is gone counts 
   assert.deepEqual(s.unchecked.map((u) => [u.key, u.why]), [['b', 'not-confirmed']]);
 });
 
-test('one re-check confirmation closes at most one of two prior findings that share a looseKey', () => {
+test('a re-check confirmation closes the row it re-checked, not its looseKey twin', () => {
   const row = (id: string, key: string): KeyedFinding => ({
     f: { id, title: 'same title', severity: 'high', source: 'deep' }, k: { key, evidenceKey: `e-${key}`, looseKey: 'l-twin', bundleId: 'swe-arch' },
   });
   const meta = { runId: 'rs_base', date: '2026-10-13' };
   const opts = { checkedBundles: new Set(['swe-arch']), requireConfirmation: true };
-  const one = diffSinceLastScan([], [row('A', 'a'), row('B', 'b')], meta, { ...opts, confirmedFixed: ['l-twin'] });
-  assert.equal(one.counts.fixed, 1);
-  assert.deepEqual(one.unchecked.map((u) => u.why), ['not-confirmed']);
-  const two = diffSinceLastScan([], [row('A', 'a'), row('B', 'b')], meta, { ...opts, confirmedFixed: ['l-twin', 'l-twin'] });
-  assert.equal(two.counts.fixed, 2, 'two confirmations close both');
+  // A was re-checked fixed; B persists with changed evidence (so only its looseKey still matches).
+  const d = diffSinceLastScan([row('B2', 'b-edited')], [row('A', 'a'), row('B', 'b')], meta, { ...opts, confirmedFixed: [{ id: 'A', looseKey: 'l-twin' }] });
+  assert.deepEqual(d.fixed.map((f) => f.key), ['a'], 'the fixed row is the one re-checked');
+  assert.deepEqual(d.statuses, ['changed'], 'the persisting twin pairs with B, not with the fixed A');
+  assert.equal(d.unchecked.length, 0);
+  // With nothing raised again, only A closes; B stays not confirmed.
+  const gone = diffSinceLastScan([], [row('A', 'a'), row('B', 'b')], meta, { ...opts, confirmedFixed: [{ id: 'A', looseKey: 'l-twin' }] });
+  assert.deepEqual(gone.fixed.map((f) => f.key), ['a']);
+  assert.deepEqual(gone.unchecked.map((u) => [u.key, u.why]), [['b', 'not-confirmed']]);
 });

@@ -25,7 +25,7 @@ import { orgIdForTenant } from '../localOrg.ts';
 import { findingKeys, type FindingKeys } from '../findingKey.ts';
 import { assignDisplayIds } from '../findingIds.ts';
 import { isRuledOutFinding } from '../reportAnchors.ts';
-import { diffSinceLastScan, excludeFromDiff, type KeyedFinding, type SinceLastScan, type UncheckedWhy } from '../sinceLastScan.ts';
+import { diffSinceLastScan, excludeFromDiff, type KeyedFinding, type SinceLastScan, type UncheckedWhy, type ConfirmedFix } from '../sinceLastScan.ts';
 import { evidenceStems, fuzzyFeatures, fuzzyWords } from '../fuzzyMatch.ts';
 import { recordRunFindings, listTargetFindings, type RunFindingRow } from '../orgFindings.ts';
 import { briefHashOf, inputsSigOf, listLineage, orgKeyFor, recordLineage, registryHashes, runTargets, selectBaseline, targetKeyFor, type LineageEntry } from '../scanLineage.ts';
@@ -385,7 +385,7 @@ export function canBeFixedIn(path: string | undefined, repos: { dir: string }[],
 }
 
 /** The since-last-scan diff for this run's final findings, or null without a baseline. */
-export function sinceLastScanFor(ctx: RunContext, rt: IncrRuntime | null, current: KeyRow[], root: string, checkedBundles: Set<string> | undefined, uncheckedLoose?: Set<string>, extra: { uncheckedWhy?: Map<string, UncheckedWhy>; ranBundles?: Set<string>; confirmedFixed?: readonly string[] } = {}): SinceLastScan | null {
+export function sinceLastScanFor(ctx: RunContext, rt: IncrRuntime | null, current: KeyRow[], root: string, checkedBundles: Set<string> | undefined, uncheckedLoose?: Set<string>, extra: { uncheckedWhy?: Map<string, UncheckedWhy>; ranBundles?: Set<string>; confirmedFixed?: readonly ConfirmedFix[] } = {}): SinceLastScan | null {
   if (!rt?.baseline) return null;
   try {
     const base = baselineKeyedFindings(ctx, rt.baseline, root, rt.repos);
@@ -422,7 +422,7 @@ export interface LineageInfo {
   uncheckedWhy?: Record<string, UncheckedWhy>;
   ranBundles?: string[];
   // looseKeys of prior findings a targeted re-check confirmed fixed this run.
-  confirmedFixed?: string[];
+  confirmedFixed?: ConfirmedFix[];
   // Those prior findings themselves — kept in the keyed sidecar as pending baseline rows for the next scan.
   pending?: Finding[];
   // What was actually REPLAYED from the baseline at execute time — the drift counter's input. A DELTA lane
