@@ -1785,7 +1785,7 @@ export async function executeOrgRun(run: Run, ctx: RunContext): Promise<void> {
         }
       } catch (e) { ctx.log(run, `cross-project: carried tags skipped (${e instanceof Error ? e.message : String(e)})`); }
     }
-    const since = incrRt ? sinceLastScanFor(ctx, incrRt, keyRows, tmp, new Set(lineageInfo?.checkedBundles ?? []), new Set(lineageInfo?.uncheckedLoose ?? []), { uncheckedWhy: new Map(Object.entries(lineageInfo?.uncheckedWhy ?? {})), ranBundles: new Set(lineageInfo?.ranBundles ?? []), confirmedFixed: new Set(lineageInfo?.confirmedFixed ?? []) }) : null;
+    const since = incrRt ? sinceLastScanFor(ctx, incrRt, keyRows, tmp, new Set(lineageInfo?.checkedBundles ?? []), new Set(lineageInfo?.uncheckedLoose ?? []), { uncheckedWhy: new Map(Object.entries(lineageInfo?.uncheckedWhy ?? {})), ranBundles: new Set(lineageInfo?.ranBundles ?? []), confirmedFixed: lineageInfo?.confirmedFixed ?? [] }) : null;
     if (since) {
       const c = since.counts;
       const byWhy = uncheckedByWhy(since.unchecked);

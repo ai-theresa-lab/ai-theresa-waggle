@@ -134,7 +134,7 @@ test('since last scan (from the baseline findings checkpoint via git show): pers
   assert.equal(unconfirmed.unchecked[0].why, 'not-confirmed');
   // A targeted re-check confirmed it gone → fixed.
   const goneKey = findingKeys(F('DATA-ENG:H2', 'Legacy flag never read', 'app/src/gone.ts:1') as any).looseKey;
-  const since = IR.sinceLastScanFor(ctx, out.rt, rows, ws, checked, undefined, { confirmedFixed: new Set([goneKey]) })!;
+  const since = IR.sinceLastScanFor(ctx, out.rt, rows, ws, checked, undefined, { confirmedFixed: [goneKey] })!;
   assert.ok(since);
   assert.deepEqual(since.statuses, ['persisting', 'changed', 'new']);
   assert.deepEqual(since.counts, { fixed: 1, new: 1, persisting: 1, changed: 1, unchecked: 0 });

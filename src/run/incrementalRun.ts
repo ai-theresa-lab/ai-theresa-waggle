@@ -385,7 +385,7 @@ export function canBeFixedIn(path: string | undefined, repos: { dir: string }[],
 }
 
 /** The since-last-scan diff for this run's final findings, or null without a baseline. */
-export function sinceLastScanFor(ctx: RunContext, rt: IncrRuntime | null, current: KeyRow[], root: string, checkedBundles: Set<string> | undefined, uncheckedLoose?: Set<string>, extra: { uncheckedWhy?: Map<string, UncheckedWhy>; ranBundles?: Set<string>; confirmedFixed?: Set<string> } = {}): SinceLastScan | null {
+export function sinceLastScanFor(ctx: RunContext, rt: IncrRuntime | null, current: KeyRow[], root: string, checkedBundles: Set<string> | undefined, uncheckedLoose?: Set<string>, extra: { uncheckedWhy?: Map<string, UncheckedWhy>; ranBundles?: Set<string>; confirmedFixed?: readonly string[] } = {}): SinceLastScan | null {
   if (!rt?.baseline) return null;
   try {
     const base = baselineKeyedFindings(ctx, rt.baseline, root, rt.repos);
@@ -398,7 +398,7 @@ export function sinceLastScanFor(ctx: RunContext, rt: IncrRuntime | null, curren
     return diffSinceLastScan(current.map(asKeyed), base, { runId: rt.baseline.runId, date: rt.baseline.finishedAt.slice(0, 10), ...(bRepo?.sha ? { sha: bRepo.sha } : {}), ...(rt.baseline.createdBy ? { by: rt.baseline.createdBy } : {}) }, {
       checkedBundles, uncheckedLoose, ...(extra.uncheckedWhy ? { uncheckedWhy: extra.uncheckedWhy } : {}), ...(extra.ranBundles ? { ranBundles: extra.ranBundles } : {}), firstSeen: (k) => firstSeen.get(k), canBeFixed,
       // "Fixed" needs positive evidence (a confirming re-check or an explicit ruled-out row), never mere absence.
-      requireConfirmation: true, confirmedFixed: extra.confirmedFixed ?? new Set(),
+      requireConfirmation: true, confirmedFixed: extra.confirmedFixed ?? [],
       // Only when the file's repo dir IS in this workspace (a missing or rebuilt workspace proves nothing).
       citedCodeGone: (b) => {
         const p = b.path ?? '';

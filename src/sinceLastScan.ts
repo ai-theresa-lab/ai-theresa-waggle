@@ -84,7 +84,7 @@ export function excludeFromDiff(f: Pick<Finding, 'source'>): boolean { return /^
 
 export function diffSinceLastScan(
   current: KeyedFinding[], baseline: KeyedFinding[], meta: SinceBaseline,
-  opts: { checkedBundles?: Set<string>; ranBundles?: Set<string>; uncheckedLoose?: Set<string>; uncheckedWhy?: Map<string, UncheckedWhy>; firstSeen?: (key: string) => string | undefined; fuzzyThreshold?: number; canBeFixed?: (b: KeyedFinding) => boolean; requireConfirmation?: boolean; confirmedFixed?: Set<string>; citedCodeGone?: (b: KeyedFinding) => boolean } = {},
+  opts: { checkedBundles?: Set<string>; ranBundles?: Set<string>; uncheckedLoose?: Set<string>; uncheckedWhy?: Map<string, UncheckedWhy>; firstSeen?: (key: string) => string | undefined; fuzzyThreshold?: number; canBeFixed?: (b: KeyedFinding) => boolean; requireConfirmation?: boolean; confirmedFixed?: readonly string[]; citedCodeGone?: (b: KeyedFinding) => boolean } = {},
 ): SinceLastScan {
   const live = (x: KeyedFinding): boolean => !excludeFromDiff(x.f) && x.ruledOut !== true;
   const base = baseline.filter(live);
@@ -117,7 +117,12 @@ export function diffSinceLastScan(
   const ruledOutNow = current.filter((c) => c.ruledOut === true && !excludeFromDiff(c.f));
   const ruledOutKeys = new Set(ruledOutNow.flatMap((c) => [c.k.key, c.k.evidenceKey, c.k.looseKey]));
   // A third: the file it cited no longer exists.
-  const confirmedGone = (b: KeyedFinding): boolean => Boolean(opts.confirmedFixed?.has(b.k.looseKey)) || ruledOutKeys.has(b.k.key) || ruledOutKeys.has(b.k.evidenceKey) || ruledOutKeys.has(b.k.looseKey) || Boolean(opts.citedCodeGone?.(b));
+  // A re-check confirmation names a looseKey, which two findings of one lane can share (same title, different files):
+  // each confirmation closes at most one unmatched row, so one fixed re-check never closes its still-open twin.
+  const confirmLeft = new Map<string, number>();
+  for (const k of opts.confirmedFixed ?? []) confirmLeft.set(k, (confirmLeft.get(k) ?? 0) + 1);
+  const takeConfirmation = (k: string): boolean => { const n = confirmLeft.get(k) ?? 0; if (!n) return false; confirmLeft.set(k, n - 1); return true; };
+  const confirmedGone = (b: KeyedFinding): boolean => ruledOutKeys.has(b.k.key) || ruledOutKeys.has(b.k.evidenceKey) || ruledOutKeys.has(b.k.looseKey) || Boolean(opts.citedCodeGone?.(b)) || takeConfirmation(b.k.looseKey);
   base.forEach((b, i) => {
     if (claimed.has(i)) return;
     const row = { title: String(b.f.title ?? ''), severity: String(b.f.severity ?? ''), key: b.k.key, bundleId: b.k.bundleId };
