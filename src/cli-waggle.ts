@@ -128,16 +128,26 @@ export function findingsSummary(findings: ReportFinding[]): { findings: unknown[
 /** Open questions: concerns a scan raised but could not settle with evidence (the report's coverage gaps). */
 /** An incremental re-scan's comparison with the previous scan of the same code, or null for a first scan. */
 export function sinceLastScan(data: Record<string, unknown> | null): Record<string, unknown> | null {
-  const s = (data?.execution as { since?: { baseline?: { runId?: string; date?: string }; counts?: Record<string, number>; fixed?: { title?: string; severity?: string; displayId?: string }[] } } | undefined)?.since;
+  const s = (data?.execution as { since?: { baseline?: { runId?: string; date?: string }; counts?: Record<string, number>; fixed?: { title?: string; severity?: string; displayId?: string }[]; unchecked?: { title?: string; severity?: string; why?: string }[] } } | undefined)?.since;
   if (!s) return null;
   return {
     previousRun: untrusted(s.baseline?.runId, 40), previousDate: untrusted(s.baseline?.date, 40),
     counts: { fixed: 0, new: 0, persisting: 0, changed: 0, unchecked: 0, ...(s.counts ?? {}) },
     fixed: (s.fixed ?? []).slice(0, 40).map((f) => ({ id: untrusted(f.displayId, 20), severity: untrusted(f.severity, 20), title: untrusted(f.title, 240) })),
+    // Prior findings NOT counted as fixed, and why (e.g. not-confirmed: not raised again, but no re-check confirmed a fix).
+    notCountedAsFixed: (s.unchecked ?? []).slice(0, 40).map((u) => ({ severity: untrusted(u.severity, 20), title: untrusted(u.title, 240), why: untrusted(u.why ?? 'not-run', 30) })),
   };
 }
 
 /** Stages that fell back or failed during a run (network trouble, a model error). Non-empty ⇒ the result is incomplete. */
+/** An ISO timestamp as local wall-clock time on this machine ("2026-10-13 14:31"). */
+export function localTime(iso: unknown): string {
+  const d = new Date(String(iso ?? ''));
+  if (Number.isNaN(d.getTime())) return '';
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 export function degradedStages(run: { degraded?: { stage?: string; reason?: string }[] }): { stage: string; reason: string }[] {
   return (run.degraded ?? []).map((d) => ({ stage: untrusted(d.stage, 60), reason: untrusted(d.reason, 300) }));
 }
@@ -436,7 +446,7 @@ async function main(argv: string[]): Promise<unknown> {
       const state = await api(srv.port, '/api/state');
       const n = Math.min(100, Math.max(1, Number(one(a, 'limit') ?? 10)));
       const runs = (state.runs as any[]).slice().sort((x, y) => String(y.createdAt).localeCompare(String(x.createdAt))).slice(0, n);
-      return { runs: runs.map((r) => ({ id: r.id, kind: r.kind ?? 'org', status: r.status, createdAt: r.createdAt, costUsd: r.costUsd ?? 0,
+      return { runs: runs.map((r) => ({ id: r.id, kind: r.kind ?? 'org', status: r.status, createdAt: r.createdAt, createdLocal: localTime(r.createdAt), costUsd: r.costUsd ?? 0,
         findings: r.findings ?? null, title: untrusted(r.renamed || r.targetName || r.question || '', 160), targets: runTargets(r), consoleUrl: consoleUrl(srv.port, r.id) })) };
     }
     case 'stop': {

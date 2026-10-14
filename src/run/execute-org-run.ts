@@ -1079,6 +1079,8 @@ async function orgCritiqueExpert(run: Run, root: string, ctx: RunContext, ws?: {
   const carriedHow: Record<string, string> = {}; const carryHyp: Hypothesis[] = []; const carryMit: Mitigation[] = []; const uncheckedLoose: string[] = [];
   // WHY each prior finding is unchecked (looseKey → reason), for both reports.
   const uncheckedWhy: Record<string, UncheckedWhy> = {};
+  // Prior findings a targeted re-check confirmed FIXED (looseKeys) — the diff counts nothing else as fixed.
+  const confirmedFixed: string[] = [];
   const notePending = (ps: PendingFinding[]): void => { for (const p of ps) { const k = findingKeysLoose(p.finding); uncheckedLoose.push(k); uncheckedWhy[k] = pendingUncheckedWhy(p); } };
   // Persisted with the findings cut so the NEXT scan can carry them again (carryForward.ts CarriedLane / PendingFinding).
   const carriedByLane: Record<string, CarriedLane> = {}; const pendingPrior: PendingFinding[] = [];
@@ -1137,7 +1139,7 @@ async function orgCritiqueExpert(run: Run, root: string, ctx: RunContext, ws?: {
           const mine = findings.filter((f) => hyp.has(String(f.id).toLowerCase()) || (x.bundle.id === 'baseline' && x.findings.includes(f)));
           for (const k of deltaLaneSplit(mine, changedSet, incr.baselineRepos, inputIndex).keep) if (k.note !== 'code' && !carriedHow[k.f.id]) carriedHow[k.f.id] = carryHow(k.note, bdate, k.inputs);
         }
-        Object.assign(carriedByLane, co.carriedByLane); pendingPrior.push(...co.pending); notePending(co.pending);
+        Object.assign(carriedByLane, co.carriedByLane); pendingPrior.push(...co.pending); notePending(co.pending); confirmedFixed.push(...co.confirmedFixed);
         // A RECHECK open question only for a re-check that was skipped / unsettled — a finding whose lane did not run or
         // complete is tracked (pending, "not re-checked") but is not a new question in this run's reports.
         for (const pnd of co.pending) if (!pendingIsSettled(pnd)) gaps.push(reverifyGap(pnd.finding, pnd.bundleId, pnd.why));
@@ -1324,6 +1326,7 @@ async function orgCritiqueExpert(run: Run, root: string, ctx: RunContext, ws?: {
     nodeSpend: currentLedger()?.nodeSpend() ?? {},
     checkedBundles: perBundle.filter((x) => !laneIncompleteReason(x.gaps)).map((x) => x.bundle.id),
     ...(uncheckedLoose.length ? { uncheckedLoose, uncheckedWhy } : {}),
+    ...(confirmedFixed.length ? { confirmedFixed } : {}),
     ranBundles: perBundle.map((x) => x.bundle.id),
     reused: { comprehend: Boolean(rzComp), lanes: [...replayedLanes] },
     ...(pendingPrior.length ? { pending: pendingPrior.map((p) => p.finding) } : {}),
@@ -1780,7 +1783,7 @@ export async function executeOrgRun(run: Run, ctx: RunContext): Promise<void> {
         }
       } catch (e) { ctx.log(run, `cross-project: carried tags skipped (${e instanceof Error ? e.message : String(e)})`); }
     }
-    const since = incrRt ? sinceLastScanFor(ctx, incrRt, keyRows, tmp, new Set(lineageInfo?.checkedBundles ?? []), new Set(lineageInfo?.uncheckedLoose ?? []), { uncheckedWhy: new Map(Object.entries(lineageInfo?.uncheckedWhy ?? {})), ranBundles: new Set(lineageInfo?.ranBundles ?? []) }) : null;
+    const since = incrRt ? sinceLastScanFor(ctx, incrRt, keyRows, tmp, new Set(lineageInfo?.checkedBundles ?? []), new Set(lineageInfo?.uncheckedLoose ?? []), { uncheckedWhy: new Map(Object.entries(lineageInfo?.uncheckedWhy ?? {})), ranBundles: new Set(lineageInfo?.ranBundles ?? []), confirmedFixed: new Set(lineageInfo?.confirmedFixed ?? []) }) : null;
     if (since) {
       const c = since.counts;
       const byWhy = uncheckedByWhy(since.unchecked);

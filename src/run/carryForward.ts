@@ -355,10 +355,11 @@ export interface CarryOutcome {
   carriedByLane: Record<string, CarriedLane>;
   pending: PendingFinding[];                  // unsettled this run (→ a RECHECK gap each + the next baseline's pending)
   uncheckedLoose: string[];                   // looseKeys the diff must report "not re-checked"
+  confirmedFixed: string[];                   // looseKeys a targeted re-check confirmed fixed (the diff's only "fixed" evidence besides a ruled-out row)
 }
 
 export async function runCarryForward(lanes: CarryLane[], inp: CarryInput): Promise<CarryOutcome> {
-  const out: CarryOutcome = { findings: [], carriedHow: {}, hypotheses: [], mitigations: [], carriedByLane: {}, pending: [], uncheckedLoose: [] };
+  const out: CarryOutcome = { findings: [], carriedHow: {}, hypotheses: [], mitigations: [], carriedByLane: {}, pending: [], uncheckedLoose: [], confirmedFixed: [] };
   const date = inp.baselineAt.slice(0, 10);
   let left = inp.reverifyMax;
   const keep = (laneId: string, lane: BaselineLaneLike, f: Finding, how: string): void => {
@@ -426,7 +427,7 @@ export async function runCarryForward(lanes: CarryLane[], inp: CarryInput): Prom
       if (!inp.budgetOk()) { rv.skippedBudget++; park(x.id, f, 'the run budget left above the report reserve could not cover another targeted re-check', lane, 'recheck-budget'); continue; }
       left--;
       const r = await inp.reverify(f);
-      if (r.status === 'fixed') { rv.fixed++; continue; }
+      if (r.status === 'fixed') { rv.fixed++; out.confirmedFixed.push(inp.looseKey(f)); continue; }
       const ev = (r.evidence ?? []).filter((e) => e.kind !== 'file' || inp.resolves({ ...f, evidence: [e] }));
       // A "persisting" verdict whose new evidence does not resolve, on a finding whose cited file changed, would keep the
       // baseline file:line, which may no longer point at the problem: park it instead.

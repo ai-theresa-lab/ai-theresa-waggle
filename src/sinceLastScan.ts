@@ -16,6 +16,10 @@
 //      ALSO never fixed when its code did not change (`canBeFixed` false — e.g. its repo is at the same SHA as the
 //      baseline): the run merely did not re-raise it (LLM variance), so it is `unchecked` with reason 'code-unchanged'
 //      (E2E 2026-09-29: a full rescan at the baseline SHA listed 3 "fixed" findings, one of them measured again).
+//      With `requireConfirmation`, NOT being raised again is not enough either: a baseline finding is fixed only when a
+//      targeted re-check confirmed it (`confirmedFixed`) or this run ruled it out explicitly (a matching ruled-out row);
+//      otherwise it is `unchecked` with reason 'not-confirmed' (E2E 2026-10-13: a full rescan of a changed local folder
+//      listed "no capacity bound" as fixed although no bound was added — the lens simply did not raise it again).
 // GCP findings (deterministic IAM / BigQuery scans appended after the agentic pipeline) are not in the findings
 // checkpoint, so both sides drop them (`excludeFromDiff`) rather than reporting them "new" on every run.
 import type { Finding } from './schema.ts';
@@ -34,9 +38,10 @@ export interface KeyedFinding { f: Pick<Finding, 'id' | 'title' | 'severity' | '
  *   recheck-budget    — its targeted re-check was skipped (the run budget, or the per-run re-check cap)
  *   recheck-unsettled — its targeted re-check ran but could not settle it
  *   code-unchanged    — not raised again, but its code did not change (so it cannot have been fixed)
+ *   not-confirmed     — not raised again and its code changed, but no re-check confirmed it fixed
  */
-export type UncheckedWhy = 'not-run' | 'incomplete' | 'recheck-budget' | 'recheck-unsettled' | 'code-unchanged';
-export const UNCHECKED_WHYS: UncheckedWhy[] = ['recheck-budget', 'recheck-unsettled', 'not-run', 'incomplete', 'code-unchanged'];
+export type UncheckedWhy = 'not-run' | 'incomplete' | 'recheck-budget' | 'recheck-unsettled' | 'code-unchanged' | 'not-confirmed';
+export const UNCHECKED_WHYS: UncheckedWhy[] = ['recheck-budget', 'recheck-unsettled', 'not-run', 'incomplete', 'code-unchanged', 'not-confirmed'];
 /** The reason clause (singular "it" / plural "them" by `n`). */
 export function uncheckedWhyText(why: UncheckedWhy | undefined, n = 1): string {
   const one = n === 1;
@@ -47,6 +52,7 @@ export function uncheckedWhyText(why: UncheckedWhy | undefined, n = 1): string {
     'recheck-budget': `${its} targeted re-check${s} ${was} skipped — the run budget (or the per-run re-check cap) ran out`,
     'recheck-unsettled': `${its} targeted re-check${s} ran but could not settle ${it}`,
     'code-unchanged': `not raised again this time, but ${its} code ${has} not changed since the last scan`,
+    'not-confirmed': `not raised again this time, but no re-check confirmed ${it} fixed — re-run the scan or check ${it} by hand`,
   };
   return t[why ?? 'not-run'];
 }
@@ -58,7 +64,7 @@ export function uncheckedByWhy(rows: { why?: UncheckedWhy }[]): Partial<Record<U
 }
 /** `4 re-check skipped (budget) · 3 not run · 2 code unchanged` — the compact run-log / run-page form. */
 export function uncheckedBreakdown(by: Partial<Record<UncheckedWhy, number>>): string {
-  const short: Record<UncheckedWhy, string> = { 'recheck-budget': 're-check skipped (budget)', 'recheck-unsettled': 're-check unsettled', 'not-run': 'review not run', incomplete: 'review incomplete', 'code-unchanged': 'code unchanged' };
+  const short: Record<UncheckedWhy, string> = { 'recheck-budget': 're-check skipped (budget)', 'recheck-unsettled': 're-check unsettled', 'not-run': 'review not run', incomplete: 'review incomplete', 'code-unchanged': 'code unchanged', 'not-confirmed': 'not confirmed fixed' };
   return UNCHECKED_WHYS.filter((w) => by[w]).map((w) => `${by[w]} ${short[w]}`).join(' · ');
 }
 export interface SinceBaseline { runId: string; date: string; sha?: string; by?: string }
@@ -78,7 +84,7 @@ export function excludeFromDiff(f: Pick<Finding, 'source'>): boolean { return /^
 
 export function diffSinceLastScan(
   current: KeyedFinding[], baseline: KeyedFinding[], meta: SinceBaseline,
-  opts: { checkedBundles?: Set<string>; ranBundles?: Set<string>; uncheckedLoose?: Set<string>; uncheckedWhy?: Map<string, UncheckedWhy>; firstSeen?: (key: string) => string | undefined; fuzzyThreshold?: number; canBeFixed?: (b: KeyedFinding) => boolean } = {},
+  opts: { checkedBundles?: Set<string>; ranBundles?: Set<string>; uncheckedLoose?: Set<string>; uncheckedWhy?: Map<string, UncheckedWhy>; firstSeen?: (key: string) => string | undefined; fuzzyThreshold?: number; canBeFixed?: (b: KeyedFinding) => boolean; requireConfirmation?: boolean; confirmedFixed?: Set<string>; citedCodeGone?: (b: KeyedFinding) => boolean } = {},
 ): SinceLastScan {
   const live = (x: KeyedFinding): boolean => !excludeFromDiff(x.f) && x.ruledOut !== true;
   const base = baseline.filter(live);
@@ -107,6 +113,11 @@ export function diffSinceLastScan(
   current.forEach((c, i) => { if (!statuses[i] && live(c)) statuses[i] = 'new'; });
   const fixed: SinceLastScan['fixed'] = [];
   const unchecked: SinceLastScan['unchecked'] = [];
+  // Positive evidence that a baseline finding is gone: a targeted re-check said so, or this run ruled it out explicitly.
+  const ruledOutNow = current.filter((c) => c.ruledOut === true && !excludeFromDiff(c.f));
+  const ruledOutKeys = new Set(ruledOutNow.flatMap((c) => [c.k.key, c.k.evidenceKey, c.k.looseKey]));
+  // A third: the file it cited no longer exists.
+  const confirmedGone = (b: KeyedFinding): boolean => Boolean(opts.confirmedFixed?.has(b.k.looseKey)) || ruledOutKeys.has(b.k.key) || ruledOutKeys.has(b.k.evidenceKey) || ruledOutKeys.has(b.k.looseKey) || Boolean(opts.citedCodeGone?.(b));
   base.forEach((b, i) => {
     if (claimed.has(i)) return;
     const row = { title: String(b.f.title ?? ''), severity: String(b.f.severity ?? ''), key: b.k.key, bundleId: b.k.bundleId };
@@ -114,6 +125,7 @@ export function diffSinceLastScan(
     if (opts.uncheckedLoose?.has(b.k.looseKey)) unchecked.push({ ...row, why: opts.uncheckedWhy?.get(b.k.looseKey) ?? 'not-run' });
     else if (opts.checkedBundles && !opts.checkedBundles.has(b.k.bundleId)) unchecked.push({ ...row, why: opts.ranBundles?.has(b.k.bundleId) ? 'incomplete' : 'not-run' });
     else if (opts.canBeFixed && !opts.canBeFixed(b)) unchecked.push({ ...row, why: 'code-unchanged' });
+    else if (opts.requireConfirmation && !confirmedGone(b)) unchecked.push({ ...row, why: 'not-confirmed' });
     else fixed.push({ title: String(b.f.title ?? ''), severity: String(b.f.severity ?? ''), ...(b.displayId ? { displayId: b.displayId } : {}), key: b.k.key });
   });
   const tags: SinceLastScan['tags'] = {};

@@ -1401,7 +1401,7 @@ export const SCAN_FORM_HELPERS_JS = String.raw`
   // The per-reason counts of the "not counted as fixed" rows (sinceLastScan.uncheckedBreakdown, same words).
   function uncheckedBreakdownText(by){
     if(!by) return '';
-    var order=[['recheck-budget','re-check skipped (budget)'],['recheck-unsettled','re-check unsettled'],['not-run','review not run'],['incomplete','review incomplete'],['code-unchanged','code unchanged']];
+    var order=[['recheck-budget','re-check skipped (budget)'],['recheck-unsettled','re-check unsettled'],['not-run','review not run'],['incomplete','review incomplete'],['code-unchanged','code unchanged'],['not-confirmed','not confirmed fixed']];
     return order.filter(function(o){ return by[o[0]]; }).map(function(o){ return by[o[0]]+' '+o[1]; }).join(' · ');
   }
   // How a bundle LANE relates to the baseline — 'reused' (replayed at $0), 'delta' (revived + a delta

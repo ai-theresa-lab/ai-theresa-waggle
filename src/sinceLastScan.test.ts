@@ -87,3 +87,32 @@ test('E2E 2026-10-01 #3: each unchecked row carries its precise reason; the rend
   assert.doesNotMatch(sinceLastScanHtml(diffSinceLastScan([], [K('B1', 'k1', { loose: 'L1' }), K('B2', 'k2', { loose: 'L2' })], META, { uncheckedLoose: new Set(['L1', 'L2']), uncheckedWhy: new Map([['L1', 'recheck-budget'], ['L2', 'recheck-budget']]) })), /did not run/, 'old code: every row "did not run"');
   assert.match(uncheckedWhyText('recheck-budget', 2), /^their targeted re-checks were skipped/);
 });
+
+test('with requireConfirmation, a prior finding that is merely not raised again is not "fixed"', () => {
+  const row = (id: string, key: string, ruledOut = false): KeyedFinding => ({
+    f: { id, title: `t-${key}`, severity: 'high', source: 'deep' }, k: { key, evidenceKey: `e-${key}`, looseKey: `l-${key}`, bundleId: 'swe-arch' }, ruledOut,
+  });
+  const meta = { runId: 'rs_base', date: '2026-10-13' };
+  const base = [row('A', 'a'), row('B', 'b'), row('C', 'c')];
+  // A: confirmed fixed by a targeted re-check · B: ruled out explicitly this run · C: simply absent.
+  const current = [row('B2', 'b', true)];
+  const loose = diffSinceLastScan(current, base, meta, { checkedBundles: new Set(['swe-arch']) });
+  assert.equal(loose.counts.fixed, 3, 'without the flag, absence still reads as fixed (legacy callers)');
+  const strict = diffSinceLastScan(current, base, meta, { checkedBundles: new Set(['swe-arch']), requireConfirmation: true, confirmedFixed: new Set(['l-a']) });
+  assert.deepEqual(strict.fixed.map((f) => f.key).sort(), ['a', 'b']);
+  assert.deepEqual(strict.unchecked.map((u) => [u.key, u.why]), [['c', 'not-confirmed']]);
+  assert.match(uncheckedWhyText('not-confirmed'), /no re-check confirmed it fixed/);
+  assert.equal(uncheckedBreakdown(uncheckedByWhy(strict.unchecked)), '1 not confirmed fixed');
+});
+
+test('with requireConfirmation, a prior finding whose cited file is gone counts as fixed', () => {
+  const row = (id: string, key: string, path: string): KeyedFinding => ({
+    f: { id, title: `t-${key}`, severity: 'high', source: 'deep' }, k: { key, evidenceKey: `e-${key}`, looseKey: `l-${key}`, bundleId: 'swe-arch' }, path,
+  });
+  const base = [row('A', 'a', 'app/src/gone.ts'), row('B', 'b', 'app/src/still.ts')];
+  const s = diffSinceLastScan([], base, { runId: 'rs_base', date: '2026-10-13' }, {
+    checkedBundles: new Set(['swe-arch']), requireConfirmation: true, citedCodeGone: (b) => b.path === 'app/src/gone.ts',
+  });
+  assert.deepEqual(s.fixed.map((f) => f.key), ['a']);
+  assert.deepEqual(s.unchecked.map((u) => [u.key, u.why]), [['b', 'not-confirmed']]);
+});

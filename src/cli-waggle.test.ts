@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CliError, currentStage, degradedStages, findingsSummary, openQuestions, parseArgs, runTargets, sinceLastScan, remediationMarkdown, reportData, repoFullName, sseLogLines, untrusted } from './cli-waggle.ts';
+import { CliError, currentStage, degradedStages, localTime, findingsSummary, openQuestions, parseArgs, runTargets, sinceLastScan, remediationMarkdown, reportData, repoFullName, sseLogLines, untrusted } from './cli-waggle.ts';
 
 test('parseArgs: command, positionals, repeated flags, = form and boolean flags', () => {
   const a = parseArgs(['scan', '--repo', 'a/b', '--repo=https://github.com/c/d', '--path', '.', '--full-rescan', 'extra']);
@@ -75,7 +75,7 @@ test('sinceLastScan summarises an incremental re-scan; a first scan has none', (
   const data = { execution: { since: { baseline: { runId: 'rs_1', date: '2026-10-01' }, counts: { fixed: 1, new: 2, persisting: 3 },
     fixed: [{ displayId: 'F-04', severity: 'high', title: 'Expired entries never deleted' }] } } };
   assert.deepEqual(sinceLastScan(data), { previousRun: 'rs_1', previousDate: '2026-10-01',
-    counts: { fixed: 1, new: 2, persisting: 3, changed: 0, unchecked: 0 }, fixed: [{ id: 'F-04', severity: 'high', title: 'Expired entries never deleted' }] });
+    counts: { fixed: 1, new: 2, persisting: 3, changed: 0, unchecked: 0 }, fixed: [{ id: 'F-04', severity: 'high', title: 'Expired entries never deleted' }], notCountedAsFixed: [] });
   assert.equal(sinceLastScan({ execution: {} }), null);
 });
 
@@ -84,4 +84,10 @@ test('degradedStages lists fallen-back stages; findings carry their change since
   assert.deepEqual(degradedStages({}), []);
   const s = findingsSummary([{ displayId: 'F-01', claim: 't', since: { status: 'persisting', since: '2026-10-01' } }] as never[]);
   assert.equal((s.findings[0] as Record<string, unknown>).change, 'persisting');
+});
+
+test('localTime renders local wall-clock time; bad input is empty', () => {
+  const d = new Date(2026, 9, 13, 14, 31);
+  assert.equal(localTime(d.toISOString()), '2026-10-13 14:31');
+  assert.equal(localTime('nope'), '');
 });
