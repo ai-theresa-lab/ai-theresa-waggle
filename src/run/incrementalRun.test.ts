@@ -18,6 +18,7 @@ const L = await import('../scanLineage.ts');
 const IR = await import('./incrementalRun.ts');
 const OF = await import('../orgFindings.ts');
 const { CKPT_STAGE_VERSION } = await import('../checkpoints.ts');
+const { findingKeys } = await import('../findingKey.ts');
 ensureStore();
 
 const ws = mkdtempSync(join(tmpdir(), 'incr-ws-'));
@@ -126,7 +127,14 @@ test('since last scan (from the baseline findings checkpoint via git show): pers
     F('DATA-ENG:H9', 'New flag added without a default', 'app/src/new.ts:1'),     // → new
   ];                                                                              // DATA-ENG:H2 (gone.ts) → fixed
   const rows = IR.keyRowsFor(current as any, ws);
-  const since = IR.sinceLastScanFor(ctx, out.rt, rows, ws, new Set(['appsec', 'data-eng', 'swe-arch', 'baseline']))!;
+  const checked = new Set(['appsec', 'data-eng', 'swe-arch', 'baseline']);
+  // Not raised again is NOT enough: without a confirming re-check (or a ruled-out row) the vanished finding is unconfirmed.
+  const unconfirmed = IR.sinceLastScanFor(ctx, out.rt, rows, ws, checked)!;
+  assert.deepEqual(unconfirmed.counts, { fixed: 0, new: 1, persisting: 1, changed: 1, unchecked: 1 });
+  assert.equal(unconfirmed.unchecked[0].why, 'not-confirmed');
+  // A targeted re-check confirmed it gone → fixed.
+  const goneKey = findingKeys(F('DATA-ENG:H2', 'Legacy flag never read', 'app/src/gone.ts:1') as any).looseKey;
+  const since = IR.sinceLastScanFor(ctx, out.rt, rows, ws, checked, undefined, { confirmedFixed: [{ id: 'DATA-ENG:H2', looseKey: goneKey }] })!;
   assert.ok(since);
   assert.deepEqual(since.statuses, ['persisting', 'changed', 'new']);
   assert.deepEqual(since.counts, { fixed: 1, new: 1, persisting: 1, changed: 1, unchecked: 0 });
@@ -155,7 +163,7 @@ test('the next run diffs against the keyed-findings SIDECAR of the recorded run;
   const rt = { orgKey: ORG, targetKey, targets, baseline: L.listLineage(ORG, targetKey)[0], plan: {} as any, summary: {} as any, repos: [{ fullName: 'acme/app', dir: 'app', sha: headSha }] };
   const rows = IR.keyRowsFor([F('APPSEC:H1', 'Password check bypass', 'app/src/auth.ts:2')] as any, ws);
   const since = IR.sinceLastScanFor(ctx, rt as any, rows, ws, new Set(['appsec', 'data-eng', 'swe-arch', 'baseline']))!;
-  assert.deepEqual(since.counts, { fixed: 2, new: 0, persisting: 1, changed: 0, unchecked: 0 }, 'from rs_next\'s sidecar: 3 rows, 1 persists');
+  assert.deepEqual(since.counts, { fixed: 0, new: 0, persisting: 1, changed: 0, unchecked: 2 }, 'from rs_next\'s sidecar: 3 rows, 1 persists, 2 vanished without a confirming re-check');
   // "persisting since <date>" is the org store's FIRST-SEEN date (rs_base was never recorded in the store here, so the
   // first record is rs_next's, written today) — not merely the baseline's date.
   assert.equal(since.tags['APPSEC:H1'].since, new Date().toISOString().slice(0, 10));

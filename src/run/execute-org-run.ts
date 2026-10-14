@@ -27,7 +27,7 @@ import { type MeasurePlane, prefixBundle, rejectedToGaps } from '../research/aud
 import { BudgetLedger, currentLedger, leadershipAuthorAdmit, recordDegraded, reverifyAdmit, withBudgetLane, withBudgetNode, withRunBudget } from '../research/budget.ts';
 import { ReadSetCollector, normalizeSnapshot, openedFromTrace, withReadSet } from '../research/readSet.ts';
 import { carryHow, deltaLaneSplit, laneCandidates, mergeCarried, pendingIsSettled, pendingUncheckedWhy, priorKnownBlock, runCarryForward, type CarriedLane, type CarryNote, type InputIndex, type PendingFinding } from './carryForward.ts';
-import { uncheckedBreakdown, uncheckedByWhy, type UncheckedWhy } from '../sinceLastScan.ts';
+import { uncheckedBreakdown, uncheckedByWhy, type UncheckedWhy, type ConfirmedFix } from '../sinceLastScan.ts';
 import { budgetLeftOpen, deltaEligibleLane, gitDiffPath, gitListFiles, incrSettings, laneIncompleteReason } from './incremental.ts';
 import { claimAuditCarryLine, deltaFocusPaths, mergeDeltaLane, staleRevivedHypotheses , unionReadSets } from './deltaLane.ts';
 import { reverifyFinding, reverifyLimits } from '../research/incrReverify.ts';
@@ -1079,6 +1079,8 @@ async function orgCritiqueExpert(run: Run, root: string, ctx: RunContext, ws?: {
   const carriedHow: Record<string, string> = {}; const carryHyp: Hypothesis[] = []; const carryMit: Mitigation[] = []; const uncheckedLoose: string[] = [];
   // WHY each prior finding is unchecked (looseKey → reason), for both reports.
   const uncheckedWhy: Record<string, UncheckedWhy> = {};
+  // Prior findings a targeted re-check confirmed FIXED (looseKeys) — the diff counts nothing else as fixed.
+  const confirmedFixed: ConfirmedFix[] = [];
   const notePending = (ps: PendingFinding[]): void => { for (const p of ps) { const k = findingKeysLoose(p.finding); uncheckedLoose.push(k); uncheckedWhy[k] = pendingUncheckedWhy(p); } };
   // Persisted with the findings cut so the NEXT scan can carry them again (carryForward.ts CarriedLane / PendingFinding).
   const carriedByLane: Record<string, CarriedLane> = {}; const pendingPrior: PendingFinding[] = [];
@@ -1088,6 +1090,8 @@ async function orgCritiqueExpert(run: Run, root: string, ctx: RunContext, ws?: {
     // A replayed findings cut keeps what it carried (and what is still pending) for the chain, and its Execution cards.
     Object.assign(carriedByLane, (fp.carried ?? {}) as Record<string, CarriedLane>); pendingPrior.push(...((fp.pending ?? []) as PendingFinding[]));
     Object.assign(carriedHow, (fp.carriedHow ?? {}) as Record<string, string>);
+    // ...and the prior findings a targeted re-check confirmed fixed, so a resumed run still counts them as fixed.
+    confirmedFixed.push(...((fp.confirmedFixed ?? []) as ConfirmedFix[]));
     for (const cl of Object.values(carriedByLane)) { carryHyp.push(...(cl.hypotheses ?? [])); carryMit.push(...(cl.mitigations ?? [])); }
     notePending(pendingPrior);
     ctx.log(run, reusedLine(rz!, 'findings', `${findings.length} finding(s) + ${gaps.length} coverage gap(s)`));
@@ -1137,7 +1141,7 @@ async function orgCritiqueExpert(run: Run, root: string, ctx: RunContext, ws?: {
           const mine = findings.filter((f) => hyp.has(String(f.id).toLowerCase()) || (x.bundle.id === 'baseline' && x.findings.includes(f)));
           for (const k of deltaLaneSplit(mine, changedSet, incr.baselineRepos, inputIndex).keep) if (k.note !== 'code' && !carriedHow[k.f.id]) carriedHow[k.f.id] = carryHow(k.note, bdate, k.inputs);
         }
-        Object.assign(carriedByLane, co.carriedByLane); pendingPrior.push(...co.pending); notePending(co.pending);
+        Object.assign(carriedByLane, co.carriedByLane); pendingPrior.push(...co.pending); notePending(co.pending); confirmedFixed.push(...co.confirmedFixed);
         // A RECHECK open question only for a re-check that was skipped / unsettled — a finding whose lane did not run or
         // complete is tracked (pending, "not re-checked") but is not a new question in this run's reports.
         for (const pnd of co.pending) if (!pendingIsSettled(pnd)) gaps.push(reverifyGap(pnd.finding, pnd.bundleId, pnd.why));
@@ -1175,7 +1179,7 @@ async function orgCritiqueExpert(run: Run, root: string, ctx: RunContext, ws?: {
   if (capMap) ctx.log(run, `stage:findings · capability map: ${capMap.examined.length} of ${capabilities.length} capabilit${capabilities.length === 1 ? 'y' : 'ies'} examined (${laneOpenedPaths.length} file(s) opened by the lanes) · ${findings.filter((f) => f.lens === 'business' && capabilities.some((c) => c.name === f.capability)).length} business finding(s) on a mapped capability · ${synthesis?.capabilityAssignments?.length ?? 0} synthesis capability assignment(s)`);
   const lensGroups = executionGroupsFor(findings, gaps, synthesis?.areas, capabilities);
   // ◆ checkpoint: findings — the iteration anchor (resume here to re-run only the report writers).
-  ctx.saveCheckpoint(run, 'findings', { findings, gaps, answerBack: answerBack ?? null, ...(Object.keys(carriedByLane).length ? { carried: carriedByLane, carriedHow } : {}), ...(pendingPrior.length ? { pending: pendingPrior } : {}) }, { label: 'Findings', detail: `${findings.length} finding(s) · ${gaps.length} gap(s)${answerBack ? ' · answer-back rows' : ''}` });
+  ctx.saveCheckpoint(run, 'findings', { findings, gaps, answerBack: answerBack ?? null, ...(Object.keys(carriedByLane).length ? { carried: carriedByLane, carriedHow } : {}), ...(pendingPrior.length ? { pending: pendingPrior } : {}), ...(confirmedFixed.length ? { confirmedFixed } : {}) }, { label: 'Findings', detail: `${findings.length} finding(s) · ${gaps.length} gap(s)${answerBack ? ' · answer-back rows' : ''}` });
 
   // ── stage:report — the deep-brief reports (the last nodes). The cross-bundle LEADERSHIP brief
   //    AND one AREA report per activated bundle that found something, all written CONCURRENTLY. Each runs on
@@ -1324,6 +1328,7 @@ async function orgCritiqueExpert(run: Run, root: string, ctx: RunContext, ws?: {
     nodeSpend: currentLedger()?.nodeSpend() ?? {},
     checkedBundles: perBundle.filter((x) => !laneIncompleteReason(x.gaps)).map((x) => x.bundle.id),
     ...(uncheckedLoose.length ? { uncheckedLoose, uncheckedWhy } : {}),
+    ...(confirmedFixed.length ? { confirmedFixed } : {}),
     ranBundles: perBundle.map((x) => x.bundle.id),
     reused: { comprehend: Boolean(rzComp), lanes: [...replayedLanes] },
     ...(pendingPrior.length ? { pending: pendingPrior.map((p) => p.finding) } : {}),
@@ -1780,7 +1785,7 @@ export async function executeOrgRun(run: Run, ctx: RunContext): Promise<void> {
         }
       } catch (e) { ctx.log(run, `cross-project: carried tags skipped (${e instanceof Error ? e.message : String(e)})`); }
     }
-    const since = incrRt ? sinceLastScanFor(ctx, incrRt, keyRows, tmp, new Set(lineageInfo?.checkedBundles ?? []), new Set(lineageInfo?.uncheckedLoose ?? []), { uncheckedWhy: new Map(Object.entries(lineageInfo?.uncheckedWhy ?? {})), ranBundles: new Set(lineageInfo?.ranBundles ?? []) }) : null;
+    const since = incrRt ? sinceLastScanFor(ctx, incrRt, keyRows, tmp, new Set(lineageInfo?.checkedBundles ?? []), new Set(lineageInfo?.uncheckedLoose ?? []), { uncheckedWhy: new Map(Object.entries(lineageInfo?.uncheckedWhy ?? {})), ranBundles: new Set(lineageInfo?.ranBundles ?? []), confirmedFixed: lineageInfo?.confirmedFixed ?? [] }) : null;
     if (since) {
       const c = since.counts;
       const byWhy = uncheckedByWhy(since.unchecked);

@@ -16,7 +16,7 @@
 // promotion, after a restart that re-admits it) it plans from what is on disk then. The only
 // request-time input is the persisted `run.fullRescan` flag.
 // FAIL-OPEN everywhere: any error here logs a reason and the run proceeds as a normal full scan.
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Run, Source, ResumeSpec, LaneSnap } from '../server.ts';
 import type { RunContext } from './run-context.ts';
@@ -25,7 +25,7 @@ import { orgIdForTenant } from '../localOrg.ts';
 import { findingKeys, type FindingKeys } from '../findingKey.ts';
 import { assignDisplayIds } from '../findingIds.ts';
 import { isRuledOutFinding } from '../reportAnchors.ts';
-import { diffSinceLastScan, excludeFromDiff, type KeyedFinding, type SinceLastScan, type UncheckedWhy } from '../sinceLastScan.ts';
+import { diffSinceLastScan, excludeFromDiff, type KeyedFinding, type SinceLastScan, type UncheckedWhy, type ConfirmedFix } from '../sinceLastScan.ts';
 import { evidenceStems, fuzzyFeatures, fuzzyWords } from '../fuzzyMatch.ts';
 import { recordRunFindings, listTargetFindings, type RunFindingRow } from '../orgFindings.ts';
 import { briefHashOf, inputsSigOf, listLineage, orgKeyFor, recordLineage, registryHashes, runTargets, selectBaseline, targetKeyFor, type LineageEntry } from '../scanLineage.ts';
@@ -385,7 +385,7 @@ export function canBeFixedIn(path: string | undefined, repos: { dir: string }[],
 }
 
 /** The since-last-scan diff for this run's final findings, or null without a baseline. */
-export function sinceLastScanFor(ctx: RunContext, rt: IncrRuntime | null, current: KeyRow[], root: string, checkedBundles: Set<string> | undefined, uncheckedLoose?: Set<string>, extra: { uncheckedWhy?: Map<string, UncheckedWhy>; ranBundles?: Set<string> } = {}): SinceLastScan | null {
+export function sinceLastScanFor(ctx: RunContext, rt: IncrRuntime | null, current: KeyRow[], root: string, checkedBundles: Set<string> | undefined, uncheckedLoose?: Set<string>, extra: { uncheckedWhy?: Map<string, UncheckedWhy>; ranBundles?: Set<string>; confirmedFixed?: readonly ConfirmedFix[] } = {}): SinceLastScan | null {
   if (!rt?.baseline) return null;
   try {
     const base = baselineKeyedFindings(ctx, rt.baseline, root, rt.repos);
@@ -397,6 +397,14 @@ export function sinceLastScanFor(ctx: RunContext, rt: IncrRuntime | null, curren
     const canBeFixed = (b: KeyedFinding): boolean => canBeFixedIn(b.path, rt.repos, unchangedDirs);
     return diffSinceLastScan(current.map(asKeyed), base, { runId: rt.baseline.runId, date: rt.baseline.finishedAt.slice(0, 10), ...(bRepo?.sha ? { sha: bRepo.sha } : {}), ...(rt.baseline.createdBy ? { by: rt.baseline.createdBy } : {}) }, {
       checkedBundles, uncheckedLoose, ...(extra.uncheckedWhy ? { uncheckedWhy: extra.uncheckedWhy } : {}), ...(extra.ranBundles ? { ranBundles: extra.ranBundles } : {}), firstSeen: (k) => firstSeen.get(k), canBeFixed,
+      // "Fixed" needs positive evidence (a confirming re-check or an explicit ruled-out row), never mere absence.
+      requireConfirmation: true, confirmedFixed: extra.confirmedFixed ?? [],
+      // Only when the file's repo dir IS in this workspace (a missing or rebuilt workspace proves nothing).
+      citedCodeGone: (b) => {
+        const p = b.path ?? '';
+        const repoDir = p.split('/')[0];
+        return Boolean(repoDir) && p.includes('/') && existsSync(join(root, repoDir)) && !existsSync(join(root, p));
+      },
     });
   } catch { return null; }
 }
@@ -413,6 +421,8 @@ export interface LineageInfo {
   // Why each of those is unchecked (looseKey → reason), and every lane that ran (complete or not).
   uncheckedWhy?: Record<string, UncheckedWhy>;
   ranBundles?: string[];
+  // looseKeys of prior findings a targeted re-check confirmed fixed this run.
+  confirmedFixed?: ConfirmedFix[];
   // Those prior findings themselves — kept in the keyed sidecar as pending baseline rows for the next scan.
   pending?: Finding[];
   // What was actually REPLAYED from the baseline at execute time — the drift counter's input. A DELTA lane
