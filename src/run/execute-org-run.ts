@@ -1090,6 +1090,8 @@ async function orgCritiqueExpert(run: Run, root: string, ctx: RunContext, ws?: {
     // A replayed findings cut keeps what it carried (and what is still pending) for the chain, and its Execution cards.
     Object.assign(carriedByLane, (fp.carried ?? {}) as Record<string, CarriedLane>); pendingPrior.push(...((fp.pending ?? []) as PendingFinding[]));
     Object.assign(carriedHow, (fp.carriedHow ?? {}) as Record<string, string>);
+    // ...and the prior findings a targeted re-check confirmed fixed, so a resumed run still counts them as fixed.
+    confirmedFixed.push(...((fp.confirmedFixed ?? []) as string[]));
     for (const cl of Object.values(carriedByLane)) { carryHyp.push(...(cl.hypotheses ?? [])); carryMit.push(...(cl.mitigations ?? [])); }
     notePending(pendingPrior);
     ctx.log(run, reusedLine(rz!, 'findings', `${findings.length} finding(s) + ${gaps.length} coverage gap(s)`));
@@ -1177,7 +1179,7 @@ async function orgCritiqueExpert(run: Run, root: string, ctx: RunContext, ws?: {
   if (capMap) ctx.log(run, `stage:findings · capability map: ${capMap.examined.length} of ${capabilities.length} capabilit${capabilities.length === 1 ? 'y' : 'ies'} examined (${laneOpenedPaths.length} file(s) opened by the lanes) · ${findings.filter((f) => f.lens === 'business' && capabilities.some((c) => c.name === f.capability)).length} business finding(s) on a mapped capability · ${synthesis?.capabilityAssignments?.length ?? 0} synthesis capability assignment(s)`);
   const lensGroups = executionGroupsFor(findings, gaps, synthesis?.areas, capabilities);
   // ◆ checkpoint: findings — the iteration anchor (resume here to re-run only the report writers).
-  ctx.saveCheckpoint(run, 'findings', { findings, gaps, answerBack: answerBack ?? null, ...(Object.keys(carriedByLane).length ? { carried: carriedByLane, carriedHow } : {}), ...(pendingPrior.length ? { pending: pendingPrior } : {}) }, { label: 'Findings', detail: `${findings.length} finding(s) · ${gaps.length} gap(s)${answerBack ? ' · answer-back rows' : ''}` });
+  ctx.saveCheckpoint(run, 'findings', { findings, gaps, answerBack: answerBack ?? null, ...(Object.keys(carriedByLane).length ? { carried: carriedByLane, carriedHow } : {}), ...(pendingPrior.length ? { pending: pendingPrior } : {}), ...(confirmedFixed.length ? { confirmedFixed } : {}) }, { label: 'Findings', detail: `${findings.length} finding(s) · ${gaps.length} gap(s)${answerBack ? ' · answer-back rows' : ''}` });
 
   // ── stage:report — the deep-brief reports (the last nodes). The cross-bundle LEADERSHIP brief
   //    AND one AREA report per activated bundle that found something, all written CONCURRENTLY. Each runs on
